@@ -12,17 +12,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout the repository
       - name: Checkout Repository
         uses: actions/checkout@v3
 
+      # Step 2: Set up Node.js
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
 
+      # Step 3: Cache npm dependencies
+      - name: Cache Node.js Modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      # Step 4: Install dependencies
       - name: Install Dependencies
         run: npm install
 
+      # Step 5: Validate configuration
       - name: Validate Configuration
         run: |
           set -e
@@ -32,19 +45,28 @@ jobs:
           fi
           echo ".env file exists."
 
+      # Step 6: Run automated tests
+      - name: Run Tests
+        run: npm test
+
+      # Step 7: Deploy the mini web app
       - name: Deploy Mini Web App
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_WEBHOOK_URL: ${{ secrets.TELEGRAM_WEBHOOK_URL }}
         run: |
           set -e
-          echo "Setting Telegram webhook..."
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-            -d "url=${TELEGRAM_WEBHOOK_URL}"
-
+          echo "Setting up Telegram webhook..."
+          webhook_response=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" -d "url=${TELEGRAM_WEBHOOK_URL}")
+          if [ "$webhook_response" -ne 200 ]; then
+            echo "Failed to set Telegram webhook. HTTP Status: $webhook_response"
+            exit 1
+          fi
+          echo "Webhook setup successful."
           echo "Running deployment script..."
           npm run deploy || echo "No deploy script found. Skipping."
 
+      # Step 8: Post-deployment checks
       - name: Post-Deployment Checks
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -54,22 +76,24 @@ jobs:
           response=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo")
           echo "Webhook Info: $response"
 
-  notify-success:
-    if: ${{ success() }}
-    uses: ./.github/workflows/telegram-notify.yml
-    with:
-      status: success
-      branch: ${{ github.ref }}
-    secrets:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+      # Step 9: Notify success
+      - name: Notify Success
+        if: ${{ success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${NOTIFY_CHAT_ID}" \
+            -d "text=✅ *SUCCESS*\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref }}\nCommit: ${{ github.sha }}\nTelegram Mini Web App deployed successfully!"
 
-  notify-failure:
-    if: ${{ failure() }}
-    uses: ./.github/workflows/telegram-notify.yml
-    with:
-      status: failure
-      branch: ${{ github.ref }}
-    secrets:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+      # Step 10: Notify failure
+      - name: Notify Failure
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${NOTIFY_CHAT_ID}" \
+            -d "text=❌ *FAILURE*\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref }}\nCommit: ${{ github.sha }}\nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
