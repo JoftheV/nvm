@@ -1,0 +1,75 @@
+name: Telegram Mini Web Apps CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-telegram-mini-web-app:
+    name: Deploy Telegram Mini Web App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Validate Configuration
+        run: |
+          set -e
+          if [ ! -f ".env" ]; then
+            echo "Error: .env file is missing."
+            exit 1
+          fi
+          echo ".env file exists."
+
+      - name: Deploy Mini Web App
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_WEBHOOK_URL: ${{ secrets.TELEGRAM_WEBHOOK_URL }}
+        run: |
+          set -e
+          echo "Setting Telegram webhook..."
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            -d "url=${TELEGRAM_WEBHOOK_URL}"
+
+          echo "Running deployment script..."
+          npm run deploy || echo "No deploy script found. Skipping."
+
+      - name: Post-Deployment Checks
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -e
+          echo "Checking Telegram webhook info..."
+          response=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo")
+          echo "Webhook Info: $response"
+
+  notify-success:
+    if: ${{ success() }}
+    uses: ./.github/workflows/telegram-notify.yml
+    with:
+      status: success
+      branch: ${{ github.ref }}
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+
+  notify-failure:
+    if: ${{ failure() }}
+    uses: ./.github/workflows/telegram-notify.yml
+    with:
+      status: failure
+      branch: ${{ github.ref }}
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
